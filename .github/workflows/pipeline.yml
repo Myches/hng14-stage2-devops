@@ -7,6 +7,7 @@ on:
 
 env:
   REGISTRY: localhost:5000
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ─────────────────────────────────────────────
@@ -16,10 +17,10 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
 
@@ -33,7 +34,7 @@ jobs:
             --extend-ignore=E501
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4.4.0
         with:
           node-version: "20"
 
@@ -65,10 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
 
@@ -87,7 +88,7 @@ jobs:
             --cov-report=html:htmlcov
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: coverage-report
           path: api/htmlcov/
@@ -105,15 +106,15 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.10.0
         with:
           driver-opts: network=host
 
       - name: Build & push API image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.15.0
         with:
           context: ./api
           push: true
@@ -123,7 +124,7 @@ jobs:
           network: host
 
       - name: Build & push worker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.15.0
         with:
           context: ./worker
           push: true
@@ -133,7 +134,7 @@ jobs:
           network: host
 
       - name: Build & push frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.15.0
         with:
           context: ./frontend
           push: true
@@ -142,10 +143,10 @@ jobs:
             ${{ env.REGISTRY }}/frontend:latest
           network: host
 
-      - name: Save image tags for downstream jobs
+      - name: Save git SHA for downstream jobs
         run: echo "${{ github.sha }}" > sha.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: build-sha
           path: sha.txt
@@ -163,9 +164,9 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.2.1
         with:
           name: build-sha
 
@@ -215,7 +216,7 @@ jobs:
             ${{ env.REGISTRY }}/frontend:$SHA
 
       - name: Upload SARIF results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: trivy-sarif-results
@@ -229,11 +230,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: security-scan
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Create .env for compose
-        run: |
-          echo "REDIS_PASSWORD=testpassword123" > .env
+        run: echo "REDIS_PASSWORD=testpassword123" > .env
 
       - name: Start full stack
         run: docker compose up -d --build
@@ -250,12 +250,10 @@ jobs:
 
       - name: Submit a job and poll until complete
         run: |
-          # Submit job
           RESPONSE=$(curl -sf -X POST http://localhost:3000/submit)
           JOB_ID=$(echo $RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
           echo "Submitted job: $JOB_ID"
 
-          # Poll until completed or timeout
           MAX_WAIT=30
           ELAPSED=0
           while [ $ELAPSED -lt $MAX_WAIT ]; do
@@ -285,10 +283,10 @@ jobs:
     needs: integration-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Deploy via SSH rolling update
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.2
         env:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         with:
@@ -300,23 +298,17 @@ jobs:
             set -euo pipefail
             cd /opt/app
 
-            # Pull latest code
             git pull origin main
 
-            # Write env file (from GitHub Secret)
             echo "REDIS_PASSWORD=${REDIS_PASSWORD}" > .env
 
-            # Rolling update for each service
             for SERVICE in api worker frontend; do
               echo "==> Rolling update: $SERVICE"
 
-              # Build new image
               docker compose build $SERVICE
 
-              # Start new container alongside old one
               docker compose up -d --no-deps --scale $SERVICE=2 --no-recreate $SERVICE
 
-              # Wait for new container health (60s timeout)
               NEW_CONTAINER=$(docker compose ps -q $SERVICE | tail -1)
               TIMEOUT=60
               ELAPSED=0
@@ -337,7 +329,6 @@ jobs:
                 exit 1
               fi
 
-              # Remove old container
               docker compose up -d --no-deps --scale $SERVICE=1 $SERVICE
               echo "  ✅ $SERVICE updated successfully"
             done
